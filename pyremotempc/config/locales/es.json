@@ -66,5 +66,20 @@
   "confirm_close_tab_msg": "¿Está seguro de que desea cerrar la sesión activa '{name}'?",
   "confirm_exit_app_title": "Confirmar Salida",
   "confirm_exit_app_msg": "Hay {count} sesión(es) remota(s) activa(s) abierta(s).\n¿Está seguro de que desea salir de pyRemoteMPC?",
-  "prefs_updated": "Preferencias actualizadas con éxito."
+  "prefs_updated": "Preferencias actualizadas con éxito.",
+  "sec_status_default": "Estado: Clave por defecto ('mR3m' - Sin configurar)",
+  "sec_status_configured": "Estado: Master Password personalizada y activa",
+  "current_pass_placeholder_default": "Dejar vacío para primera configuración (Por defecto: mR3m)",
+  "current_pass_placeholder_set": "Ingrese la master password actual",
+  "sec_reset_confirm_title": "Restaurar Master Password",
+  "sec_reset_confirm_msg": "¿Está seguro de que desea restaurar la Master Password a la clave por defecto ('mR3m')?",
+  "sec_reset_success_title": "Restauración Exitosa",
+  "sec_reset_success": "La Master Password ha sido restaurada por defecto ('mR3m').",
+  "sec_updated_title": "Seguridad Actualizada",
+  "sec_update_success": "Master Password de cifrado actualizada con éxito.",
+  "sec_error_title": "Error de Seguridad",
+  "sec_pass_empty_err": "La nueva master password no puede estar vacía.",
+  "sec_pass_mismatch_err": "La nueva master password y su confirmación no coinciden.",
+  "sec_pass_incorrect_err": "La master password actual es incorrecta.",
+  "sec_startup_default_hint": "Nota: Aún no hay contraseña personalizada. Si se activa, la clave de inicio es 'mR3m'. Se recomienda configurarla abajo."
 }

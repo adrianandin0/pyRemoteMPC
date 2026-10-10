@@ -296,25 +296,62 @@ class VNCEngine(BaseProtocolEngine):
         t = threading.Thread(target=_worker, daemon=True)
         t.start()
 
-    def _create_vnc_passwd_file(self, password: str) -> Optional[str]:
-        """Creates a temporary password file for vncviewer using vncpasswd binary if present."""
-        vncpasswd_bin = shutil.which("vncpasswd")
-        if not vncpasswd_bin:
+    @classmethod
+    def _create_vnc_passwd_file(cls, password: str) -> Optional[str]:
+        """
+        Creates a temporary password file for vncviewer.
+        Uses vncpasswd binary if present, or generates standard VNC obfuscated DES format natively in Python.
+        Ensures strict 0600 file permissions and safe location.
+        """
+        if not password:
             return None
 
-        tf = tempfile.NamedTemporaryFile(delete=False, prefix="vnc_pass_")
-        tf.close()
+        # 1. Try vncpasswd binary if installed
+        vncpasswd_bin = shutil.which("vncpasswd")
+        if vncpasswd_bin:
+            try:
+                res = subprocess.run([vncpasswd_bin, "-f"], input=password.encode("utf-8"), capture_output=True, timeout=5)
+                if res.returncode == 0 and res.stdout:
+                    return cls._write_secure_temp_file(res.stdout)
+            except Exception:
+                pass
 
-        # Run vncpasswd -f <<< "password" > tf.name
+        # 2. Pure Python native generation using standard VNC DES obfuscation
         try:
-            res = subprocess.run([vncpasswd_bin, "-f"], input=password.encode("utf-8"), capture_output=True, timeout=5)
-            if res.returncode == 0 and res.stdout:
-                with open(tf.name, "wb") as f:
-                    f.write(res.stdout)
-                return tf.name
-        except Exception:
-            pass
-        return None
+            try:
+                from cryptography.hazmat.decrepit.ciphers.algorithms import TripleDES
+            except ImportError:
+                from cryptography.hazmat.primitives.ciphers.algorithms import TripleDES
+            from cryptography.hazmat.primitives.ciphers import Cipher, modes
+
+            vnc_fixed_key = bytes([0x17, 0x52, 0x6b, 0x06, 0x23, 0x4e, 0x58, 0x07])
+            pass_bytes = password.encode("latin-1", errors="ignore")[:8].ljust(8, b"\x00")
+            cipher = Cipher(TripleDES(vnc_fixed_key * 3), modes.ECB())
+            encryptor = cipher.encryptor()
+            encrypted_bytes = encryptor.update(pass_bytes) + encryptor.finalize()
+            return cls._write_secure_temp_file(encrypted_bytes)
+        except Exception as e:
+            print(f"Native VNC password file generation notice: {e}")
+            return None
+
+    @classmethod
+    def _write_secure_temp_file(cls, data: bytes) -> Optional[str]:
+        runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
+        target_dir = os.path.join(runtime_dir, "pyremotempc") if runtime_dir and os.path.isdir(runtime_dir) else None
+        if target_dir:
+            try:
+                os.makedirs(target_dir, mode=0o700, exist_ok=True)
+            except Exception:
+                target_dir = None
+
+        tf = tempfile.NamedTemporaryFile(delete=False, dir=target_dir, prefix="vnc_pass_")
+        try:
+            os.chmod(tf.name, 0o600)
+            tf.write(data)
+            tf.flush()
+            return tf.name
+        finally:
+            tf.close()
 
     def _read_loop(self):
         if not self.process or not self.process.stdout:

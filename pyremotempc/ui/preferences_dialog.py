@@ -239,12 +239,13 @@ class PreferencesDialog(QDialog):
 
         self.chk_require_startup = QCheckBox("Ask for Master Password on application startup", group_startup)
         self.chk_require_startup.setChecked(self.settings.get("require_master_password_on_startup", False))
+        self.chk_require_startup.toggled.connect(self._on_startup_toggled)
         vbox_startup.addWidget(self.chk_require_startup)
 
-        lbl_startup_info = QLabel("If unchecked, pyRemoteMPC opens automatically without prompting for a password on startup.", group_startup)
-        lbl_startup_info.setWordWrap(True)
-        lbl_startup_info.setStyleSheet("color: #888888; font-size: 11px; margin-top: 4px;")
-        vbox_startup.addWidget(lbl_startup_info)
+        self.lbl_startup_info = QLabel("If unchecked, pyRemoteMPC opens automatically without prompting for a password on startup.", group_startup)
+        self.lbl_startup_info.setWordWrap(True)
+        self.lbl_startup_info.setStyleSheet("color: #888888; font-size: 11px; margin-top: 4px;")
+        vbox_startup.addWidget(self.lbl_startup_info)
         layout.addWidget(group_startup)
 
         # Master Password Change & Reset Group
@@ -257,8 +258,13 @@ class PreferencesDialog(QDialog):
             group_sec
         )
         lbl_sec_info.setWordWrap(True)
-        lbl_sec_info.setStyleSheet("color: #4ec9b0; font-size: 11px; font-weight: normal; margin-bottom: 8px;")
+        lbl_sec_info.setStyleSheet("color: #4ec9b0; font-size: 11px; font-weight: normal; margin-bottom: 6px;")
         form_sec.addRow(lbl_sec_info)
+
+        # Status badge label
+        self.lbl_sec_status = QLabel(group_sec)
+        self.lbl_sec_status.setWordWrap(True)
+        form_sec.addRow(self.lbl_sec_status)
 
         self.edit_curr_pass = QLineEdit(group_sec)
         self.edit_curr_pass.setEchoMode(QLineEdit.EchoMode.Password)
@@ -278,7 +284,7 @@ class PreferencesDialog(QDialog):
         btn_change_key.clicked.connect(self._change_master_key)
         btn_sec_layout.addWidget(btn_change_key)
 
-        btn_reset_key = QPushButton("Reset to default master password", group_sec)
+        btn_reset_key = QPushButton(tr("reset_default_key", self.lang), group_sec)
         btn_reset_key.setIcon(get_icon("refresh"))
         btn_reset_key.clicked.connect(self._reset_default_master_key)
         btn_sec_layout.addWidget(btn_reset_key)
@@ -311,8 +317,37 @@ class PreferencesDialog(QDialog):
         form_cfg.addRow("Config Directory:", cfg_dir_layout)
         layout.addWidget(group_cfg)
 
+        self._update_security_status_display()
+        self._on_startup_toggled(self.chk_require_startup.isChecked())
+
         layout.addStretch()
         self.tab_widget.addTab(tab, get_icon("security"), "Security")
+
+    def _update_security_status_display(self):
+        """Updates Master Password status banner and input placeholders dynamically."""
+        is_set = self.master_key_mgr.is_master_key_set()
+        if not is_set:
+            self.lbl_sec_status.setText(f"● {tr('sec_status_default', self.lang)}")
+            self.lbl_sec_status.setStyleSheet(
+                "color: #eab308; font-size: 11px; font-weight: bold; padding: 5px 10px; "
+                "background-color: rgba(234, 179, 8, 0.12); border: 1px solid rgba(234, 179, 8, 0.35); border-radius: 4px; margin-bottom: 6px;"
+            )
+            self.edit_curr_pass.setPlaceholderText(tr("current_pass_placeholder_default", self.lang))
+        else:
+            self.lbl_sec_status.setText(f"● {tr('sec_status_configured', self.lang)}")
+            self.lbl_sec_status.setStyleSheet(
+                "color: #4ec9b0; font-size: 11px; font-weight: bold; padding: 5px 10px; "
+                "background-color: rgba(78, 201, 176, 0.12); border: 1px solid rgba(78, 201, 176, 0.35); border-radius: 4px; margin-bottom: 6px;"
+            )
+            self.edit_curr_pass.setPlaceholderText(tr("current_pass_placeholder_set", self.lang))
+
+    def _on_startup_toggled(self, checked: bool):
+        if checked and not self.master_key_mgr.is_master_key_set():
+            self.lbl_startup_info.setText(tr("sec_startup_default_hint", self.lang))
+            self.lbl_startup_info.setStyleSheet("color: #eab308; font-size: 11px; margin-top: 4px;")
+        else:
+            self.lbl_startup_info.setText("If unchecked, pyRemoteMPC opens automatically without prompting for a password on startup.")
+            self.lbl_startup_info.setStyleSheet("color: #888888; font-size: 11px; margin-top: 4px;")
 
     def _browse_default_dir(self):
         directory = QFileDialog.getExistingDirectory(
@@ -340,20 +375,27 @@ class PreferencesDialog(QDialog):
         new_pass = self.edit_new_pass.text()
         confirm_pass = self.edit_confirm_pass.text()
 
-        if not self.master_key_mgr.verify_master_key(curr_pass):
-            QMessageBox.warning(self, "Security Error", "Current master password is incorrect.")
-            return
+        # If a custom master password was already set, require verifying current password
+        if self.master_key_mgr.is_master_key_set():
+            if not self.master_key_mgr.verify_master_key(curr_pass):
+                QMessageBox.warning(self, tr("sec_error_title", self.lang), tr("sec_pass_incorrect_err", self.lang))
+                return
+        else:
+            # First-time configuration: empty string or default "mR3m" are accepted
+            if curr_pass and not self.master_key_mgr.verify_master_key(curr_pass):
+                QMessageBox.warning(self, tr("sec_error_title", self.lang), tr("sec_pass_incorrect_err", self.lang))
+                return
 
         if not new_pass:
-            QMessageBox.warning(self, "Security Error", "New master password cannot be empty.")
+            QMessageBox.warning(self, tr("sec_error_title", self.lang), tr("sec_pass_empty_err", self.lang))
             return
 
         if new_pass != confirm_pass:
-            QMessageBox.warning(self, "Security Error", "New master password and confirmation do not match.")
+            QMessageBox.warning(self, tr("sec_error_title", self.lang), tr("sec_pass_mismatch_err", self.lang))
             return
 
         self.master_key_mgr.set_master_key(new_pass)
-        
+
         # Update parent main window master password in RAM and re-save encrypted file
         if self.parent() and hasattr(self.parent(), "master_password"):
             self.parent().master_password = new_pass
@@ -363,27 +405,32 @@ class PreferencesDialog(QDialog):
         self.edit_curr_pass.clear()
         self.edit_new_pass.clear()
         self.edit_confirm_pass.clear()
-        QMessageBox.information(self, "Security Updated", "Master Encryption Password updated successfully.")
+        self._update_security_status_display()
+        self._on_startup_toggled(self.chk_require_startup.isChecked())
+        QMessageBox.information(self, tr("sec_updated_title", self.lang), tr("sec_update_success", self.lang))
 
     def _reset_default_master_key(self):
-        curr_pass = self.edit_curr_pass.text()
-        if not curr_pass:
-            QMessageBox.warning(self, "Security Required", "Please enter your Current Master Password in the field above to authorize reset.")
-            return
-
-        if not self.master_key_mgr.verify_master_key(curr_pass):
-            QMessageBox.warning(self, "Access Denied", "Current Master Password is incorrect.")
-            return
+        # If a custom master password is set, verify current password first to prevent unauthorized resets
+        if self.master_key_mgr.is_master_key_set():
+            curr_pass = self.edit_curr_pass.text()
+            if not curr_pass or not self.master_key_mgr.verify_master_key(curr_pass):
+                QMessageBox.warning(
+                    self,
+                    tr("sec_error_title", self.lang),
+                    tr("sec_pass_incorrect_err", self.lang)
+                )
+                self.edit_curr_pass.setFocus()
+                return
 
         reply = QMessageBox.question(
             self,
-            "Reset Master Password",
-            "Are you sure you want to reset the Master Password to default ('mR3m')?",
+            tr("sec_reset_confirm_title", self.lang),
+            tr("sec_reset_confirm_msg", self.lang),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No
         )
         if reply == QMessageBox.StandardButton.Yes:
-            self.master_key_mgr.set_master_key("mR3m")
+            self.master_key_mgr.reset_to_default()
             if self.parent() and hasattr(self.parent(), "master_password"):
                 self.parent().master_password = "mR3m"
                 if hasattr(self.parent(), "_auto_save_connections"):
@@ -392,7 +439,9 @@ class PreferencesDialog(QDialog):
             self.edit_curr_pass.clear()
             self.edit_new_pass.clear()
             self.edit_confirm_pass.clear()
-            QMessageBox.information(self, "Reset Successful", "Master Password reset to default successfully.")
+            self._update_security_status_display()
+            self._on_startup_toggled(self.chk_require_startup.isChecked())
+            QMessageBox.information(self, tr("sec_reset_success_title", self.lang), tr("sec_reset_success", self.lang))
 
     def _on_save(self):
         selected_lang = self.combo_lang.currentData()

@@ -209,15 +209,24 @@ class NativePTYSSHEngine(BaseProtocolEngine):
 
         sshpass = shutil.which("sshpass")
         cmd = []
+        env = os.environ.copy()
+        env["TERM"] = term_type
         if sshpass and self.password:
-            cmd.extend([sshpass, "-p", self.password])
+            cmd.extend([sshpass, "-e"])
+            env["SSHPASS"] = self.password
+
+        known_hosts_file = os.path.expanduser("~/.ssh/known_hosts")
+        try:
+            os.makedirs(os.path.dirname(known_hosts_file), mode=0o700, exist_ok=True)
+        except Exception:
+            pass
 
         cmd.append("ssh")
         cmd.extend([
             "-tt",
             "-F", "/dev/null",
-            "-o", "StrictHostKeyChecking=no",
-            "-o", "UserKnownHostsFile=/dev/null",
+            "-o", "StrictHostKeyChecking=accept-new",
+            "-o", f"UserKnownHostsFile={known_hosts_file}",
             "-o", "ServerAliveInterval=15",
             "-o", "ServerAliveCountMax=3",
             "-o", "Ciphers=aes128-cbc,3des-cbc,aes192-cbc,aes256-cbc,aes128-ctr,aes192-ctr,aes256-ctr",
@@ -247,9 +256,6 @@ class NativePTYSSHEngine(BaseProtocolEngine):
                 fcntl.ioctl(self.master_fd, termios.TIOCSWINSZ, winsz)
             except Exception:
                 pass
-
-            env = os.environ.copy()
-            env["TERM"] = term_type
 
             slave = self.slave_fd
             def _child_setup():
@@ -658,6 +664,24 @@ class SSHEngine(BaseProtocolEngine):
                     self.transport.connect(username=self.username, password=self.password)
             else:
                 self.transport.connect(username=self.username, password=self.password)
+
+            # Check host key against ~/.ssh/known_hosts to alert user of MITM
+            try:
+                remote_key = self.transport.get_remote_server_key()
+                if remote_key:
+                    known_hosts_path = os.path.expanduser("~/.ssh/known_hosts")
+                    if os.path.exists(known_hosts_path):
+                        host_keys = paramiko.util.load_host_keys(known_hosts_path)
+                        if self.hostname in host_keys:
+                            key_type = remote_key.get_name()
+                            expected_key = host_keys[self.hostname].get(key_type)
+                            if expected_key and expected_key != remote_key:
+                                if self.output_callback:
+                                    self.output_callback(
+                                        f"\r\n\033[31m[SSH Security Alert]: Host key for {self.hostname} differs from known_hosts! Possible Man-in-the-Middle.\033[0m\r\n"
+                                    )
+            except Exception:
+                pass
 
             # Open interactive PTY shell channel
             self.channel = self.transport.open_session()

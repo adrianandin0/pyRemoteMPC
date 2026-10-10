@@ -1,5 +1,6 @@
 import xml.etree.ElementTree as ET
 import os
+import shutil
 from typing import Tuple, List, Optional
 from pyremotempc.config.models import ConnectionNode
 from pyremotempc.crypto.aead_gcm import decrypt_aead_password, encrypt_aead_password
@@ -202,7 +203,11 @@ class mRemoteNGXmlParser:
                 self._apply_inheritance(child)
 
     def export_to_file(self, root_node: ConnectionNode, file_path: str, version: str = "2.5") -> None:
-        """Exports a ConnectionNode tree to an mRemoteNG XML file."""
+        """
+        Exports a ConnectionNode tree to an mRemoteNG XML file atomically.
+        Writes to a temporary file in the same directory, flushes and syncs to disk,
+        creates a .bak backup of the existing file, and uses os.replace for atomic overwrite.
+        """
         root_elem = ET.Element("Connections", {
             "xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
             "xmlns:xsd": "http://www.w3.org/2001/XMLSchema",
@@ -216,7 +221,29 @@ class mRemoteNGXmlParser:
 
         tree = ET.ElementTree(root_elem)
         ET.indent(tree, space="  ")
-        tree.write(file_path, encoding="utf-8", xml_declaration=True)
+
+        dir_name = os.path.dirname(os.path.abspath(file_path))
+        if dir_name:
+            os.makedirs(dir_name, exist_ok=True)
+
+        tmp_path = f"{file_path}.tmp"
+        bak_path = f"{file_path}.bak"
+
+        # 1. Write completely to temporary file and sync to disk
+        with open(tmp_path, "wb") as f:
+            tree.write(f, encoding="utf-8", xml_declaration=True)
+            f.flush()
+            os.fsync(f.fileno())
+
+        # 2. Backup existing file safely if it exists and has content
+        if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+            try:
+                shutil.copy2(file_path, bak_path)
+            except Exception:
+                pass
+
+        # 3. Atomic replacement on filesystem level
+        os.replace(tmp_path, file_path)
 
     def _serialize_node(self, node: ConnectionNode, version: str) -> ET.Element:
         enc_pass = ""

@@ -236,11 +236,18 @@ class MainWindow(QMainWindow):
                 self.tree_widget.load_tree(root_node)
                 if skip_passwords:
                     self.statusBar().showMessage("Connections loaded in Read-Only mode (original encrypted passwords preserved on disk).")
-                return
             except Exception as e:
-                print(f"Failed to auto-load connections: {e}")
-
-        self._load_default_tree()
+                print(f"Failed to auto-load connections from primary file: {e}")
+                bak_path = f"{default_path}.bak"
+                if os.path.exists(bak_path) and os.path.getsize(bak_path) > 0:
+                    try:
+                        parser = mRemoteNGXmlParser(master_password=self.master_password, skip_passwords=skip_passwords)
+                        root_node, ver = parser.parse_file(bak_path)
+                        self.tree_widget.load_tree(root_node)
+                        self.statusBar().showMessage(tr("connections", self.settings.language) + " recovered from backup (.bak).")
+                        return
+                    except Exception as be:
+                        print(f"Failed to recover from backup file: {be}")
 
     def _load_default_tree(self):
         root = ConnectionNode(name=tr("connections", self.settings.language), node_type="Container", icon="Connections")

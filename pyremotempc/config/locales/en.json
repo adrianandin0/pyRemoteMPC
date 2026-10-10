@@ -66,5 +66,20 @@
   "confirm_close_tab_msg": "Are you sure you want to close active session '{name}'?",
   "confirm_exit_app_title": "Confirm Exit",
   "confirm_exit_app_msg": "There are {count} active remote session(s) open.\nAre you sure you want to exit pyRemoteMPC?",
-  "prefs_updated": "Preferences updated successfully."
+  "prefs_updated": "Preferences updated successfully.",
+  "sec_status_default": "Status: Default Key ('mR3m' - Not configured)",
+  "sec_status_configured": "Status: Custom Master Password configured and active",
+  "current_pass_placeholder_default": "Leave empty for first-time configuration (Default: mR3m)",
+  "current_pass_placeholder_set": "Enter current master password",
+  "sec_reset_confirm_title": "Reset Master Password",
+  "sec_reset_confirm_msg": "Are you sure you want to reset the Master Password to the default key ('mR3m')?",
+  "sec_reset_success_title": "Reset Successful",
+  "sec_reset_success": "Master Password has been reset to default ('mR3m').",
+  "sec_updated_title": "Security Updated",
+  "sec_update_success": "Master Encryption Password updated successfully.",
+  "sec_error_title": "Security Error",
+  "sec_pass_empty_err": "New master password cannot be empty.",
+  "sec_pass_mismatch_err": "New master password and confirmation do not match.",
+  "sec_pass_incorrect_err": "Current master password is incorrect.",
+  "sec_startup_default_hint": "Note: No custom password is set yet. If enabled now, the startup password is 'mR3m'. Configure a custom password below."
 }

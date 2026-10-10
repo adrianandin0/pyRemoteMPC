@@ -1,23 +1,28 @@
 import os
 import re
+import time
 import datetime
 from typing import Optional
 import html
 from collections import defaultdict
 import pyte
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QPlainTextEdit, QFileDialog, QMessageBox, QMenu
-from PySide6.QtGui import QFont, QKeyEvent, QInputMethodEvent
-from PySide6.QtCore import Qt, Signal, QObject
+from PySide6.QtGui import QFont, QTextCursor, QKeyEvent, QInputMethodEvent
+from PySide6.QtCore import Qt, Signal, QObject, QTimer
 from pyremotempc.engine.ssh_engine import SSHEngine
 from pyremotempc.engine.ssh1_engine import SSH1Engine
 from pyremotempc.engine.telnet_engine import TelnetEngine
 from pyremotempc.engine.serial_engine import SerialEngine
 from pyremotempc.config.settings import SettingsManager
 
+_DEBUG_TERM = os.environ.get("PYREMOTEMPC_DEBUG_TERMINAL", "").strip() in ("1", "true", "yes")
+
 
 def term_debug(msg: str):
+    if not _DEBUG_TERM:
+        return
     try:
-        with open("/tmp/terminal_debug.log", "a") as f:
+        with open("/tmp/terminal_debug.log", "a", encoding="utf-8") as f:
             f.write(f"[{datetime.datetime.now().isoformat()}] {msg}\n")
     except Exception:
         pass
@@ -454,6 +459,14 @@ class TerminalWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
+        # Incremental render state and stream throttle timer
+        self._num_history_rendered = 0
+        self._last_render_time = 0.0
+        self._render_interval = 0.025  # Max ~40 FPS during continuous data streams
+        self._render_timer = QTimer(self)
+        self._render_timer.setSingleShot(True)
+        self._render_timer.timeout.connect(self._render_screen)
+
         self.text_edit = SSHPlainTextEdit(self.engine, self)
         self.text_edit.setReadOnly(True)
         self.apply_settings()
@@ -467,6 +480,14 @@ class TerminalWidget(QWidget):
         if self.settings.enable_logging:
             self._init_session_logger()
 
+    def _full_render(self):
+        """Forces a clean, complete re-render of the entire terminal buffer and history."""
+        if hasattr(self, "_render_timer") and self._render_timer.isActive():
+            self._render_timer.stop()
+        self.text_edit.clear()
+        self._num_history_rendered = 0
+        self._render_screen()
+
     def apply_settings(self):
         """Applies font, size, scrollback buffer lines and theme from settings."""
         font = QFont(self.settings.font_family, self.settings.font_size)
@@ -475,7 +496,7 @@ class TerminalWidget(QWidget):
         c_theme = self.settings.console_theme
         style = THEME_STYLES.get(c_theme, THEME_STYLES["Classic Dark"])
         self.text_edit.setStyleSheet(style)
-        self.append_text("")
+        self._full_render()
 
     def _init_session_logger(self):
         try:
@@ -590,7 +611,7 @@ class TerminalWidget(QWidget):
             self._safe_resize_screen(rows, cols)
             if hasattr(self.engine, "resize_pty"):
                 self.engine.resize_pty(cols, rows)
-            self.append_text("")
+            self._full_render()
 
     def start_session(self):
         """Starts SSH connection."""
@@ -630,7 +651,7 @@ class TerminalWidget(QWidget):
         self.session_closed.emit(clean_exit)
 
     def append_text(self, text: str):
-        """Feeds output into pyte VT100 screen emulator and updates QPlainTextEdit screen."""
+        """Feeds output into pyte VT100 screen emulator and schedules incremental UI rendering."""
         term_debug(f"RECV: {repr(text)}")
         if text:
             self.stream.feed(text)
@@ -638,55 +659,6 @@ class TerminalWidget(QWidget):
             # Clear scrollback history when clear command (\x1b[2J or \x1b[3J) is received
             if "\x1b[2J" in text or "\x1b[3J" in text:
                 self.screen.history.top.clear()
-
-        c_theme = self.settings.console_theme
-        default_fg, default_bg = THEME_DEFAULTS.get(c_theme, THEME_DEFAULTS["Classic Dark"])
-
-        cursor_y = self.screen.cursor.y
-        cursor_x = self.screen.cursor.x
-
-        p_list = []
-        for r in self.screen.history.top:
-            p_list.append(row_to_html(r, self.screen.columns, default_fg, default_bg, cursor_x=-1))
-
-        # Trim trailing blank lines on active screen if cursor is above them
-        max_active_row = cursor_y
-        for r_idx in range(self.screen.lines - 1, cursor_y, -1):
-            row_str = "".join(self.screen.buffer[r_idx][c].data for c in range(self.screen.columns)).rstrip()
-            if row_str:
-                max_active_row = r_idx
-                break
-
-        for r_idx in range(max_active_row + 1):
-            c_x = cursor_x if r_idx == cursor_y else -1
-            p_list.append(row_to_html(self.screen.buffer[r_idx], self.screen.columns, default_fg, default_bg, cursor_x=c_x))
-
-        font_family = html.escape(self.settings.font_family)
-        font_size = self.settings.font_size
-        full_html = (
-            f"<html><head><style>"
-            f"body {{ background-color: {default_bg}; color: {default_fg}; "
-            f"font-family: '{font_family}', monospace; font-size: {font_size}pt; margin:0; padding:0; line-height: 1.15; }}"
-            f"p {{ margin: 0; padding: 0; white-space: pre-wrap; font-size: {font_size}pt; }}"
-            f"span {{ font-size: {font_size}pt; }}"
-            f"</style></head><body>{''.join(p_list)}</body></html>"
-        )
-        self.text_edit.document().setHtml(full_html)
-
-        # Position text cursor to match pyte virtual cursor coordinates
-        history_count = len(self.screen.history.top)
-        cursor_line_idx = history_count + cursor_y
-        doc = self.text_edit.document()
-        block = doc.findBlockByNumber(min(cursor_line_idx, max(0, doc.blockCount() - 1)))
-
-        char_col = min(cursor_x, max(0, block.length() - 1))
-        pos = block.position() + char_col
-
-        tc = self.text_edit.textCursor()
-        tc.setPosition(pos)
-        self.text_edit.setTextCursor(tc)
-        self.text_edit.ensureCursorVisible()
-        self.text_edit.viewport().update()
 
         # Write raw received text to session log file if enabled
         log_f = getattr(self, "log_file", None)
@@ -697,6 +669,96 @@ class TerminalWidget(QWidget):
             except Exception:
                 pass
 
+        now = time.time()
+        elapsed = now - self._last_render_time
+        if elapsed >= self._render_interval:
+            self._render_screen()
+        else:
+            if not self._render_timer.isActive():
+                rem_ms = max(1, int((self._render_interval - elapsed) * 1000))
+                self._render_timer.start(rem_ms)
+
+    def _render_screen(self):
+        """Renders newly accumulated history lines and active pyte screen buffer incrementally into QPlainTextEdit."""
+        self._last_render_time = time.time()
+        doc = self.text_edit.document()
+        curr_hist_len = len(self.screen.history.top)
+
+        # Reset document if history was cleared or shrunk (e.g. clear command or terminal resize)
+        if curr_hist_len < self._num_history_rendered:
+            self.text_edit.clear()
+            self._num_history_rendered = 0
+
+        vbar = self.text_edit.verticalScrollBar()
+        was_at_bottom = (vbar.value() >= vbar.maximum() - 10)
+
+        cursor = QTextCursor(doc)
+        if self._num_history_rendered > 0:
+            start_block = doc.findBlockByNumber(self._num_history_rendered)
+            if start_block.isValid():
+                pos = max(0, start_block.position() - 1)
+                cursor.setPosition(pos)
+                cursor.movePosition(QTextCursor.MoveOperation.End, QTextCursor.MoveMode.KeepAnchor)
+                cursor.removeSelectedText()
+            else:
+                cursor.movePosition(QTextCursor.MoveOperation.End)
+        else:
+            cursor.setPosition(0)
+            cursor.movePosition(QTextCursor.MoveOperation.End, QTextCursor.MoveMode.KeepAnchor)
+            cursor.removeSelectedText()
+
+        c_theme = self.settings.console_theme
+        default_fg, default_bg = THEME_DEFAULTS.get(c_theme, THEME_DEFAULTS["Classic Dark"])
+        cols = self.screen.columns
+
+        # 1. Append newly scrolled history lines
+        if curr_hist_len > self._num_history_rendered:
+            for idx in range(self._num_history_rendered, curr_hist_len):
+                r = self.screen.history.top[idx]
+                h = row_to_html(r, cols, default_fg, default_bg, cursor_x=-1)
+                if doc.isEmpty():
+                    cursor.insertHtml(h)
+                else:
+                    cursor.insertBlock()
+                    cursor.insertHtml(h)
+            self._num_history_rendered = curr_hist_len
+
+        # 2. Append active screen lines
+        cursor_y = self.screen.cursor.y
+        cursor_x = self.screen.cursor.x
+
+        max_active_row = cursor_y
+        for r_idx in range(self.screen.lines - 1, cursor_y, -1):
+            row_str = "".join(self.screen.buffer[r_idx][c].data for c in range(cols)).rstrip()
+            if row_str:
+                max_active_row = r_idx
+                break
+
+        for r_idx in range(max_active_row + 1):
+            c_x = cursor_x if r_idx == cursor_y else -1
+            h = row_to_html(self.screen.buffer[r_idx], cols, default_fg, default_bg, cursor_x=c_x)
+            if doc.isEmpty():
+                cursor.insertHtml(h)
+            else:
+                cursor.insertBlock()
+                cursor.insertHtml(h)
+
+        # 3. Position cursor to match pyte virtual cursor coordinates
+        cursor_line_idx = self._num_history_rendered + cursor_y
+        block = doc.findBlockByNumber(min(cursor_line_idx, max(0, doc.blockCount() - 1)))
+        if block.isValid():
+            char_col = min(cursor_x, max(0, block.length() - 1))
+            pos = block.position() + char_col
+            tc = self.text_edit.textCursor()
+            tc.setPosition(pos)
+            self.text_edit.setTextCursor(tc)
+
+        if was_at_bottom:
+            self.text_edit.ensureCursorVisible()
+            vbar.setValue(vbar.maximum())
+
+        self.text_edit.viewport().update()
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._update_pty_dimensions()
@@ -706,7 +768,7 @@ class TerminalWidget(QWidget):
         self.screen.reset()
         self.screen.mode.add(pyte.modes.LNM)
         self.screen.history.top.clear()
-        self.append_text("")
+        self._full_render()
 
     def export_to_txt(self):
         """Prompts user and exports current session terminal buffer to a TXT file."""
@@ -726,6 +788,8 @@ class TerminalWidget(QWidget):
             QMessageBox.critical(self, "Export Error", f"Failed to save TXT file:\n{str(e)}")
 
     def closeEvent(self, event):
+        if hasattr(self, "_render_timer") and self._render_timer.isActive():
+            self._render_timer.stop()
         if self.log_file and not self.log_file.closed:
             try:
                 self.log_file.close()

@@ -35,13 +35,18 @@ class MasterKeyManager:
         self.settings.set("master_key_salt", salt.hex())
         self.settings.set("master_key_hash", hash_hex)
 
+    def reset_to_default(self):
+        """Clears custom master key, resetting to unconfigured default state."""
+        self.settings.set("master_key_salt", "")
+        self.settings.set("master_key_hash", "")
+
     def verify_master_key(self, password: str) -> bool:
         """Verifies given password against stored salt and hash."""
         salt_hex = self.settings.get("master_key_salt", "")
         stored_hash = self.settings.get("master_key_hash", "")
         if not salt_hex or not stored_hash:
-            # Default fallback if not set yet: default password is "mR3m"
-            return password == "mR3m"
+            # Default fallback if not set yet: default password is "mR3m" or empty string
+            return password == "mR3m" or password == ""
 
         try:
             salt = bytes.fromhex(salt_hex)

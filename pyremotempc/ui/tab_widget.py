@@ -384,6 +384,14 @@ class SessionTabWidget(QTabWidget):
         redirect_clipboard = getattr(node, "redirect_clipboard", self.settings.rdp_enable_clipboard)
         redirect_drives = getattr(node, "redirect_drives", self.settings.rdp_enable_drive_redirection)
 
+        raw_sound = getattr(node, "redirect_sound", "BringToThisComputer")
+        if isinstance(raw_sound, str):
+            redirect_sound = raw_sound.lower() in ("bringtothiscomputer", "true", "1", "yes")
+        else:
+            redirect_sound = bool(raw_sound)
+
+        colors = getattr(node, "colors", "")
+
         rdp_engine = RDPEngine(
             hostname=node.hostname,
             port=node.port,
@@ -395,7 +403,9 @@ class SessionTabWidget(QTabWidget):
             rdp_cert_path=getattr(node, "rdp_cert_path", ""),
             redirect_drives=redirect_drives,
             redirect_clipboard=redirect_clipboard,
-            shared_folder=shared_folder
+            redirect_sound=redirect_sound,
+            shared_folder=shared_folder,
+            colors=colors
         )
 
         rdp_container.rdp_engine = rdp_engine
@@ -432,14 +442,31 @@ class SessionTabWidget(QTabWidget):
 
         btn_mute.toggled.connect(toggle_mute)
         
+        resize_debounce_timer = QTimer(rdp_container)
+        resize_debounce_timer.setSingleShot(True)
+        resize_debounce_timer.setInterval(600)
+        pending_size = [None, None]
+
+        def _perform_reconnect():
+            target_w, target_h = pending_size
+            if not target_w or not target_h:
+                return
+            if not rdp_engine.process or rdp_engine.process.poll() is not None:
+                return
+            if abs(target_w - rdp_engine.width) > 10 or abs(target_h - rdp_engine.height) > 10:
+                rdp_bridge.output_received.emit(f"\n[INFO] Auto-reconnecting to resize desktop to {target_w}x{target_h}...\n")
+                rdp_engine.stop_session()
+                start_rdp()
+
+        resize_debounce_timer.timeout.connect(_perform_reconnect)
+
         def on_embed_resized(w, h):
             if not rdp_engine.process or rdp_engine.process.poll() is not None:
                 return
-            # If size changed significantly (more than 10 pixels), reconnect
             if abs(w - rdp_engine.width) > 10 or abs(h - rdp_engine.height) > 10:
-                rdp_bridge.output_received.emit(f"\n[INFO] Auto-reconnecting to resize desktop to {w}x{h} (Windows 7 compatibility)...\n")
-                rdp_engine.stop_session()
-                start_rdp()
+                pending_size[0] = w
+                pending_size[1] = h
+                resize_debounce_timer.start()
 
         embed_widget.size_settled.connect(on_embed_resized)
 

@@ -71,20 +71,24 @@ class NativePTYSFTPEngine:
             "-o", "ConnectTimeout=10"
         ]
 
+    def _build_cmd(self, tool: str) -> Tuple[List[str], Dict[str, str]]:
+        env = os.environ.copy()
+        cmd = []
+        sshpass = shutil.which("sshpass")
+        if sshpass and self.password:
+            cmd.extend([sshpass, "-e"])
+            env["SSHPASS"] = self.password
+        cmd.append(tool)
+        return cmd, env
+
     def list_remote_dir(self, remote_path: str = ".") -> List[Dict[str, Any]]:
         """Lists remote directory using real OpenSSH sftp binary batch execution."""
-        sshpass = shutil.which("sshpass")
-        sftp_bin = shutil.which("sftp")
         target = f"{self.username}@{self.hostname}" if self.username else self.hostname
 
         self.log(f"Listing remote directory '{remote_path}' via ssh ls...")
 
-        cmd = []
-        if sshpass and self.password:
-            cmd.extend([sshpass, "-p", self.password])
-
+        cmd, env = self._build_cmd("ssh")
         cmd.extend([
-            "ssh",
             "-F", "/dev/null",
             "-o", "StrictHostKeyChecking=no",
             "-o", "UserKnownHostsFile=/dev/null"
@@ -101,7 +105,7 @@ class NativePTYSFTPEngine:
         ])
 
         try:
-            res = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=15, env=env)
             lines = res.stdout.splitlines()
             items = []
             for line in lines:
@@ -162,16 +166,11 @@ class NativePTYSFTPEngine:
 
     def upload_file(self, local_path: str, remote_path: str, progress_callback: Optional[Callable[[int, int], None]] = None):
         """Uploads file using native SCP with progress monitoring."""
-        sshpass = shutil.which("sshpass")
         target = f"{self.username}@{self.hostname}:{remote_path}" if self.username else f"{self.hostname}:{remote_path}"
 
         self.log(f"Uploading '{local_path}' to '{remote_path}' via scp...")
-        cmd = []
-        if sshpass and self.password:
-            cmd.extend([sshpass, "-p", self.password])
-
+        cmd, env = self._build_cmd("scp")
         cmd.extend([
-            "scp",
             "-F", "/dev/null",
             "-o", "StrictHostKeyChecking=no",
             "-o", "UserKnownHostsFile=/dev/null"
@@ -192,7 +191,7 @@ class NativePTYSFTPEngine:
             pass
 
         local_size = os.path.getsize(local_path) if os.path.exists(local_path) else 0
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
 
         while proc.poll() is None:
             if progress_callback and local_size > 0:
@@ -215,16 +214,11 @@ class NativePTYSFTPEngine:
 
     def download_file(self, remote_path: str, local_path: str, progress_callback: Optional[Callable[[int, int], None]] = None):
         """Downloads file using native SCP with progress monitoring."""
-        sshpass = shutil.which("sshpass")
         source = f"{self.username}@{self.hostname}:{remote_path}" if self.username else f"{self.hostname}:{remote_path}"
 
         self.log(f"Downloading '{remote_path}' to '{local_path}' via scp...")
-        cmd = []
-        if sshpass and self.password:
-            cmd.extend([sshpass, "-p", self.password])
-
+        cmd, env = self._build_cmd("scp")
         cmd.extend([
-            "scp",
             "-F", "/dev/null",
             "-o", "StrictHostKeyChecking=no",
             "-o", "UserKnownHostsFile=/dev/null"
@@ -253,7 +247,7 @@ class NativePTYSFTPEngine:
             except Exception:
                 pass
 
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
 
         while proc.poll() is None:
             if progress_callback and os.path.exists(local_path):
@@ -275,16 +269,12 @@ class NativePTYSFTPEngine:
 
     def upload_directory(self, local_path: str, remote_path: str, progress_callback: Optional[Callable[[int, int], None]] = None):
         """Uploads a directory recursively using native SCP."""
-        sshpass = shutil.which("sshpass")
         target = f"{self.username}@{self.hostname}:{remote_path}" if self.username else f"{self.hostname}:{remote_path}"
 
         self.log(f"Uploading directory '{local_path}' to '{remote_path}' via scp -r...")
-        cmd = []
-        if sshpass and self.password:
-            cmd.extend([sshpass, "-p", self.password])
-
+        cmd, env = self._build_cmd("scp")
+        cmd.append("-r")
         cmd.extend([
-            "scp", "-r",
             "-F", "/dev/null",
             "-o", "StrictHostKeyChecking=no",
             "-o", "UserKnownHostsFile=/dev/null"
@@ -298,7 +288,7 @@ class NativePTYSFTPEngine:
             target
         ])
 
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=300, env=env)
         if res.returncode != 0:
             self.log(f"SCP Directory Upload error: {res.stderr}")
             raise Exception(f"Native SCP Directory Upload Error: {res.stderr}")
@@ -306,16 +296,12 @@ class NativePTYSFTPEngine:
 
     def download_directory(self, remote_path: str, local_path: str, progress_callback: Optional[Callable[[int, int], None]] = None):
         """Downloads a directory recursively using native SCP."""
-        sshpass = shutil.which("sshpass")
         source = f"{self.username}@{self.hostname}:{remote_path}" if self.username else f"{self.hostname}:{remote_path}"
 
         self.log(f"Downloading directory '{remote_path}' to '{local_path}' via scp -r...")
-        cmd = []
-        if sshpass and self.password:
-            cmd.extend([sshpass, "-p", self.password])
-
+        cmd, env = self._build_cmd("scp")
+        cmd.append("-r")
         cmd.extend([
-            "scp", "-r",
             "-F", "/dev/null",
             "-o", "StrictHostKeyChecking=no",
             "-o", "UserKnownHostsFile=/dev/null"
@@ -329,18 +315,14 @@ class NativePTYSFTPEngine:
             local_path
         ])
 
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=300, env=env)
         if res.returncode != 0:
             self.log(f"SCP Directory Download error: {res.stderr}")
             raise Exception(f"Native SCP Directory Download Error: {res.stderr}")
     def _run_ssh_cmd(self, ssh_args: str) -> subprocess.CompletedProcess:
-        sshpass = shutil.which("sshpass")
         target = f"{self.username}@{self.hostname}" if self.username else self.hostname
-        cmd = []
-        if sshpass and self.password:
-            cmd.extend([sshpass, "-p", self.password])
+        cmd, env = self._build_cmd("ssh")
         cmd.extend([
-            "ssh",
             "-F", "/dev/null",
             "-o", "StrictHostKeyChecking=no",
             "-o", "UserKnownHostsFile=/dev/null"
@@ -353,7 +335,7 @@ class NativePTYSFTPEngine:
             target,
             ssh_args
         ])
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=15, env=env)
 
     def create_remote_dir(self, remote_path: str):
         res = self._run_ssh_cmd(f"mkdir -p \"{remote_path}\"")
@@ -423,23 +405,10 @@ class SFTPEngine:
         return self.native_sftp
 
     def connect(self) -> bool:
-        """Connects to remote server and initializes SFTP subsystem, prioritizing Paramiko transport."""
+        """Connects to remote server and initializes SFTP subsystem using a dedicated socket connection."""
         self.log(f"Initiating SFTP Connection to {self.username}@{self.hostname}:{self.port}...")
 
-        # 1. Try reusing active Paramiko transport from SSHEngine
-        if self.ssh_engine and getattr(self.ssh_engine, "transport", None):
-            try:
-                active_trans = self.ssh_engine.transport
-                if active_trans and active_trans.is_active():
-                    self.log("Reusing active Paramiko SSH Transport from active terminal session...")
-                    self.sftp = paramiko.SFTPClient.from_transport(active_trans)
-                    self.is_connected = True
-                    self.log("SFTP subsystem opened successfully over active transport.")
-                    return True
-            except Exception as e:
-                self.log(f"Transport reuse SFTP notice: {str(e)}")
-
-        # 2. Try creating fresh Paramiko Transport socket
+        # 1. Prioritize establishing dedicated Paramiko Transport socket (prevents terminal contention/freeze)
         paramiko_err = None
         try:
             self.log("Establishing dedicated Paramiko Transport socket...")
@@ -462,7 +431,20 @@ class SFTPEngine:
             return True
         except Exception as e:
             paramiko_err = str(e)
-            self.log(f"Paramiko SFTP Connection Error: {paramiko_err}")
+            self.log(f"Dedicated Paramiko SFTP Connection Error: {paramiko_err}")
+
+        # 2. Fallback: If dedicated socket fails and active Paramiko transport exists, attempt reuse
+        if self.ssh_engine and getattr(self.ssh_engine, "transport", None):
+            try:
+                active_trans = self.ssh_engine.transport
+                if active_trans and active_trans.is_active():
+                    self.log("Falling back to active Paramiko SSH Transport from terminal session...")
+                    self.sftp = paramiko.SFTPClient.from_transport(active_trans)
+                    self.is_connected = True
+                    self.log("SFTP subsystem opened successfully over active transport.")
+                    return True
+            except Exception as e:
+                self.log(f"Transport reuse SFTP notice: {str(e)}")
 
         # 3. Fallback to Native OpenSSH SFTP / SCP Engine
         self.log("Switching seamlessly to Native OpenSSH SFTP / SCP Fallback...")
