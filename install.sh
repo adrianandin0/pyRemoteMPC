@@ -44,14 +44,14 @@ install_system_dependencies() {
     if command -v apt-get >/dev/null 2>&1; then
         info "Using APT package manager (Debian, Ubuntu, Mint, Pop!_OS, etc.)..."
         apt-get update -y
-        apt-get install -y python3 python3-pip python3-venv python3-dev socat telnet openssh-client sshpass pulseaudio-utils freerdp2-x11 tigervnc-viewer || \
-        apt-get install -y python3 python3-pip python3-venv python3-dev socat telnet openssh-client sshpass pulseaudio-utils freerdp3-x11 tigervnc-viewer || \
+        apt-get install -y python3 python3-pip python3-venv python3-dev socat telnet openssh-client sshpass pulseaudio-utils freerdp2-x11 tigervnc-viewer libxcb-cursor0 || \
+        apt-get install -y python3 python3-pip python3-venv python3-dev socat telnet openssh-client sshpass pulseaudio-utils freerdp3-x11 tigervnc-viewer libxcb-cursor0 || \
         apt-get install -y python3 python3-pip python3-venv python3-dev socat telnet openssh-client sshpass pulseaudio-utils freerdp2-bin vncviewer || true
 
     elif command -v dnf >/dev/null 2>&1; then
         info "Using DNF package manager (Fedora, RHEL, CentOS, Rocky, AlmaLinux, etc.)..."
-        dnf install -y python3 python3-pip python3-devel socat telnet openssh-clients sshpass pulseaudio-utils freerdp tigervnc || \
-        dnf install -y python3 python3-pip python3-devel socat telnet openssh-clients sshpass pulseaudio-utils freerdp2 tigervnc || true
+        dnf install -y python3 python3-pip python3-devel socat telnet openssh-clients sshpass pulseaudio-utils freerdp tigervnc libxcb-cursor || \
+        dnf install -y python3 python3-pip python3-devel socat telnet openssh-clients sshpass pulseaudio-utils freerdp2 tigervnc libxcb-cursor || true
 
     elif command -v yum >/dev/null 2>&1; then
         info "Using YUM package manager (RHEL 7, CentOS 7, Amazon Linux, etc.)..."
@@ -118,6 +118,16 @@ info "Setting up Python virtual environment..."
 python3 -m venv "${INSTALL_DIR}/.venv"
 "${INSTALL_DIR}/.venv/bin/pip" install --upgrade pip setuptools wheel
 "${INSTALL_DIR}/.venv/bin/pip" install -r "${INSTALL_DIR}/requirements.txt"
+
+# Pre-compile Python bytecode for faster startup and syntax validation
+info "Pre-compiling Python bytecode..."
+"${INSTALL_DIR}/.venv/bin/python3" -m compileall -q "${INSTALL_DIR}/pyremotempc"
+
+# Set secure filesystem permissions for multi-user security
+info "Enforcing secure filesystem permissions on ${INSTALL_DIR}..."
+find "${INSTALL_DIR}" -type d -exec chmod 755 {} +
+find "${INSTALL_DIR}" -type f -exec chmod 644 {} +
+chmod -R 755 "${INSTALL_DIR}/.venv/bin"
 
 # Create launcher binary wrapper in /usr/local/bin/pyremotempc
 info "Creating launcher executable in ${BIN_LINK}..."
